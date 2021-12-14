@@ -1,8 +1,9 @@
 ---
 variables:
-  # Use TLS https://docs.gitlab.com/ee/ci/docker/using_docker_build.html#tls-enabled
-  DOCKER_HOST: DOCKER_HOST=tcp://localhost:2375
-  CONTAINER_TEST_IMAGE: $CI_REGISTRY_IMAGE:$CI_COMMIT_REF_SLUG
+  DOCKER_HOST: tcp://docker:2376
+  DOCKER_TLS_CERTDIR: "/certs"
+  DOCKER_TLS_VERIFY: 0
+  DOCKER_CERT_PATH: "$DOCKER_TLS_CERTDIR/client"
   CONTAINER_RELEASE_IMAGE: $CI_REGISTRY_IMAGE
 
 stages:
@@ -10,22 +11,23 @@ stages:
 
 .build_container:
   stage: build
+  services:
+    - name: docker:dind
+      command: ["--registry-mirror", "https://registry-mirror.example.com"]
   artifacts:
     expire_in: 1 week
   image:
-    name: gcr.io/kaniko-project/executor:debug
-    entrypoint: [""]
+    name: docker
   before_script:
-    - mkdir -p /kaniko/.docker
-    - echo "{\"auths\":{\"${CI_REGISTRY}\":{\"auth\":\"$(printf "%s:%s" "${CI_REGISTRY_USER}" "${CI_REGISTRY_PASSWORD}" | base64 | tr -d '\n')\"}}}" > /kaniko/.docker/config.json
+    - echo "$CI_REGISTRY_PASSWORD" | docker login $CI_REGISTRY --username $CI_REGISTRY_USER --password-stdin
   rules:
-    - if: '$CI_COMMIT_TAG =~ /^\d+\.\d+\.\d+$/'
+    - if: '$CI_COMMIT_TAG =~ /^v?\d+\.\d+\.\d+$/'
 
 Build Container Image:
   extends: .build_container
   script:
-    - >-
-      /kaniko/executor
-      --context "${CI_PROJECT_DIR}"
-      --dockerfile "${CI_PROJECT_DIR}/Dockerfile"
-      --destination "${CI_REGISTRY_IMAGE}:${CI_COMMIT_TAG}"
+    - docker pull $CI_REGISTRY_IMAGE:latest-build || true
+    - docker build --cache-from $CI_REGISTRY_IMAGE:latest-build --tag $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA --tag $CI_REGISTRY_IMAGE:latest-build .
+    - docker push $CI_REGISTRY_IMAGE:latest-build
+    - docker build --cache-from $CI_REGISTRY_IMAGE:latest-build --tag $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA --tag $CI_REGISTRY_IMAGE:$CI_COMMIT_TAG .
+    - docker push $CI_REGISTRY_IMAGE:$CI_COMMIT_TAG
